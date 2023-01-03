@@ -2,14 +2,22 @@ name: "Terraform"
 
 on:
   workflow_dispatch:
-
+    inputs:
+      working-directory: 
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      working-directory: 
+        required: true
+        type: string
 jobs:
   terraform:
     name: "Terraform"
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./terraform
+        working-directory: ${{ inputs.working-directory }}
     steps:
       - name: Checkout
         uses: actions/checkout@v3
