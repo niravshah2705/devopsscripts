@@ -1,0 +1,305 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: The CICD resources for terraform resources
+Parameters:
+  Stage:
+    Description: The stage this pipeline will be triggered-on
+    Default: latest
+    AllowedValues:
+      - prod
+      - latest
+      - test
+      - beta
+    Type: String
+  Team:
+    Description: The team owning the cluster
+    Default: devops
+    Type: String
+  Service:
+    Description: The service name this pipeline is part-of
+    Type: String
+    Default: tenant-network
+    AllowedValues:
+      - tenant-network
+      - tenant-platform
+      - shared-network
+  Feature:
+    Description: The name of this specific feature
+    Type: String
+    Default: network
+    AllowedValues:
+      - network
+      - platform
+  CodebuildServiceRoleARN:
+    Description: The ARN of the AWS IAM role that enabled AWS Codebuild to interact with dependent AWS services
+    Type: String
+  CodePipelineServiceRoleARN:
+    Description: The ARN of the AWS IAM role that enabled AWS Codebuild to interact with dependent AWS services
+    Type: String
+  GithubRepoOwner:
+    Description: The repository owner.
+    Type: String
+    Default: my-repo-org
+    AllowedValues:
+      - my-repo-org
+  GithubRepoName:
+    Description: Repository name that contains the code
+    Type: String
+    Default: "my-repo"
+  GithubRepoBranch:
+    Description: The branch that will be used for the CICD process
+    Type: String
+    Default: main
+  GithubOauthToken:
+    Description: The token that will be used to authenticate with github.
+    Type: String
+    NoEcho: true
+    Default: "{{resolve:secretsmanager:AuthTokens:SecretString:GithubToken}}"
+  TFWorkingDirectory:
+    Type: String
+    Description: Working directory of the terraform code
+    Default: terraform/
+    AllowedValues:
+      - terraform/
+  TFPlanBuildSpecLocation:
+    Description: The location of the buildspec file for terraform plan codebuild inside the repository
+    Type: String
+    Default: devopsscripts/IaaC-terraform/codebuild/tf_plan_buildspec.yml
+  TFApplyBuildSpecLocation:
+    Description: The location of the buildspec file for terraform apply codebuild inside the repository
+    Type: String
+    Default: devopsscripts/IaaC-terraform/codebuild/tf_apply_buildspec.yml	
+  TerraformVersion:
+    Type: String
+    Description: The version of terraform to use during the plan and apply steps
+    Default: "1.2.3"
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Environment
+        Parameters:
+          - Stage
+          - Team
+          - Service
+          - Feature
+      - Label:
+          default: Source Code Repository
+        Parameters:
+          - GithubRepoOwner
+          - GithubRepoName
+          - GithubRepoBranch
+          - GithubWorkingDirectory
+          - GithubOauthToken
+Resources:
+  PlanCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      BadgeEnabled: false
+      Description:
+        Fn::Sub: CodeBuild project to run terraform plan on ${Stage}-${Team}
+      Environment:
+        Type: LINUX_CONTAINER
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+        ComputeType: BUILD_GENERAL1_SMALL
+        EnvironmentVariables:
+          - Name: TF_DIR
+            Value: !Ref TFWorkingDirectory
+          - Name: GITHUB_TOKEN
+            Type: SECRETS_MANAGER
+            Value: AuthTokens:GithubToken
+          - Name: TF_VAR_github_token
+            Type: SECRETS_MANAGER
+            Value: AuthTokens:GithubToken
+          - Name: STAGE
+            Value: !Ref Stage
+          - Name: ACCOUNT
+            Value: !Ref AWS::AccountId
+          - Name: REGION
+            Value: !Ref AWS::Region
+          - Name: SERVICE
+            Value: !Ref Service
+          - Name: TERRAFORM_VERSION
+            Value: !Ref TerraformVersion
+        PrivilegedMode: true
+        ImagePullCredentialsType: CODEBUILD
+      Name:
+        Fn::Sub: ${Stage}-${Service}-tf-plan
+      QueuedTimeoutInMinutes: 480
+      ServiceRole:
+        Ref: CodebuildServiceRoleARN
+      Source:
+        Type: CODEPIPELINE
+        GitCloneDepth: 1
+        BuildSpec:
+          Ref: TFPlanBuildSpecLocation
+      SourceVersion:
+        Fn::Sub: refs/heads/${GithubRepoBranch}
+      TimeoutInMinutes: 60
+  ApplyCodeBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Artifacts:
+        Type: CODEPIPELINE
+      BadgeEnabled: false
+      Description:
+        Fn::Sub: CodeBuild project to run terraform apply on ${Stage}-${Team}
+      Environment:
+        Type: LINUX_CONTAINER
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+        ComputeType: BUILD_GENERAL1_SMALL
+        EnvironmentVariables:
+          - Name: TF_DIR
+            Value: !Ref TFWorkingDirectory
+          - Name: GITHUB_TOKEN
+            Type: SECRETS_MANAGER
+            Value: AuthTokens:GithubToken
+          - Name: TF_VAR_github_token
+            Type: SECRETS_MANAGER
+            Value: AuthTokens:GithubToken
+          - Name: STAGE
+            Value: !Ref Stage
+          - Name: ACCOUNT
+            Value: !Ref AWS::AccountId
+          - Name: FEATURE
+            Value: !Ref Feature
+          - Name: TERRAFORM_VERSION
+            Value: !Ref TerraformVersion
+        PrivilegedMode: true
+        ImagePullCredentialsType: CODEBUILD
+      Name:
+        Fn::Sub: ${Stage}-${Service}-tf-apply
+      QueuedTimeoutInMinutes: 480
+      ServiceRole:
+        Ref: CodebuildServiceRoleARN
+      Source:
+        Type: CODEPIPELINE
+        GitCloneDepth: 1
+        BuildSpec:
+          Ref: TFApplyBuildSpecLocation
+      SourceVersion: !Sub refs/heads/${GithubRepoBranch}
+      TimeoutInMinutes: 60
+  CodePipelineS3BucketArtifacts:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "eks-codepipeline-${AWS::StackName}"
+  CodePipelineS3BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: CodePipelineS3BucketArtifacts
+      PolicyDocument:
+        Version: '2012-10-17'
+        Id: SSEAndSSLPolicy
+        Statement:
+        - Sid: DenyUnEncryptedObjectUploads
+          Effect: Deny
+          Principal: "*"
+          Action: s3:PutObject
+          Resource:
+            Fn::Join:
+            - "/"
+            - - Fn::GetAtt:
+                - CodePipelineS3BucketArtifacts
+                - Arn
+              - "*"
+          Condition:
+            StringNotEquals:
+              s3:x-amz-server-side-encryption: aws:kms
+        - Sid: DenyInsecureConnections
+          Effect: Deny
+          Principal: "*"
+          Action: s3:*
+          Resource:
+            Fn::Join:
+            - "/"
+            - - Fn::GetAtt:
+                - CodePipelineS3BucketArtifacts
+                - Arn
+              - "*"
+          Condition:
+            Bool:
+              aws:SecureTransport: 'false'
+  CodePipelineBuild:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      DisableInboundStageTransitions:
+        - StageName: Deploy
+          Reason: 'Disable transition until approved to deploy.'
+      RoleArn: 
+        Ref: CodePipelineServiceRoleARN
+      Name:
+        Fn::Sub: ${Stage}-${Service}-pipeline
+      ArtifactStore:
+        Type: S3
+        Location:
+          Ref: CodePipelineS3BucketArtifacts
+      Stages:
+      - Name: Source
+        Actions:
+        - Name: Source
+          ActionTypeId:
+            Category: Source
+            Owner: ThirdParty
+            Provider: GitHub
+            Version: '1'
+          RunOrder: 1
+          Configuration:
+            Owner: !Ref GithubRepoOwner
+            Repo: !Ref GithubRepoName
+            Branch: !Ref GithubRepoBranch
+            OAuthToken: !Ref GithubOauthToken
+            PollForSourceChanges: true
+          OutputArtifacts:
+          - Name: SourceArtifact
+          InputArtifacts: []
+          Region:
+            Ref: AWS::Region
+          Namespace: SourceVariables
+      - Name: Build
+        Actions:
+        - Name: TerraformPlan
+          ActionTypeId:
+            Category: Build
+            Owner: AWS
+            Provider: CodeBuild
+            Version: '1'
+          RunOrder: 1
+          Configuration:
+            ProjectName:
+              Ref: PlanCodeBuildProject
+          OutputArtifacts:
+          - Name: PlanArtifact
+          InputArtifacts:
+          - Name: SourceArtifact
+          Region:
+            Ref: AWS::Region
+          Namespace: PlanVariables
+      - Name: Deploy
+        Actions:
+        - Name: Approve
+          ActionTypeId:
+            Category: Approval
+            Owner: AWS
+            Provider: Manual
+            Version: '1'
+          RunOrder: 1
+        - Name: TerraformApply
+          ActionTypeId:
+            Category: Build
+            Owner: AWS
+            Provider: CodeBuild
+            Version: '1'
+          RunOrder: 2
+          Configuration:
+            ProjectName:
+              Ref: ApplyCodeBuildProject
+          OutputArtifacts:
+          - Name: ApplyArtifact
+          InputArtifacts:
+          - Name: PlanArtifact
+          Region:
+            Ref: AWS::Region
+          Namespace: ApplyVariables
