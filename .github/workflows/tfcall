@@ -1,0 +1,10 @@
+name: "tfcall"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  call-terraform:
+    uses: ./.github/workflows/terraform.yml
+    with: 
+      working-directory: terraform
