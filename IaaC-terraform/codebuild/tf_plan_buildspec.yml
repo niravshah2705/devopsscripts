@@ -1,0 +1,30 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - curl -s -qL -o terraform_install.zip "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+      - unzip terraform_install.zip -d /usr/local/bin/
+      - chmod +x /usr/local/bin/terraform
+    finally:
+      - terraform --version
+  pre_build:
+    commands:
+      - echo Entered the pre_build phase...
+      - cd $TF_DIR
+      - terraform init -backend-config=backend/${STAGE}-${ACCOUNT}.${REGION}.hcl -upgrade
+      - terraform workspace select ${SERVICE}-${STAGE}-${REGION} || terraform workspace new ${SERVICE}-${STAGE}-${REGION}
+  build:
+    commands:
+      - echo Entered the build phase...
+      - terraform plan -input=false -out=tf.plan -var-file="tfvars/${STAGE}-${ACCOUNT}.${REGION}.tfvars"
+  post_build:
+    commands:
+      - echo Done
+
+artifacts:
+  files:
+    - '**/*'
+  name: PlanArtifact
+  discard-paths: no
+  base-directory: $CODEBUILD_SRC_DIR
