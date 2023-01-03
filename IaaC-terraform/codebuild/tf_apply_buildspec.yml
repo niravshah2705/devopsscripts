@@ -1,0 +1,22 @@
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - curl -s -qL -o terraform_install.zip "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+      - unzip terraform_install.zip -d /usr/local/bin/
+      - chmod +x /usr/local/bin/terraform
+    finally:
+      - terraform --version
+  pre_build:
+    commands:
+      - echo Entered the pre_build phase...
+      - cd $TF_DIR
+      - terraform init -upgrade
+  build:
+    commands:
+      - echo Entered the build phase...
+      - terraform apply -auto-approve -input=false tf.plan
+  post_build:
+    commands:
+      - echo Done
